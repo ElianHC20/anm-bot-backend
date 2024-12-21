@@ -22,6 +22,21 @@ app.use((req, res, next) => {
     next();
 });
 
+// Ruta principal
+app.get('/', (req, res) => {
+    res.send('ANM Bot Server Running');
+});
+
+// Ruta de health check
+app.get('/health', (req, res) => {
+    res.json({ 
+        status: 'ok',
+        timestamp: new Date().toISOString(),
+        clientActive: client !== null,
+        websocketConnections: wss.clients.size
+    });
+});
+
 const createWhatsAppClient = () => {
     const client = new Client({
         puppeteer: {
@@ -30,7 +45,11 @@ const createWhatsAppClient = () => {
                 '--no-sandbox',
                 '--disable-setuid-sandbox',
                 '--disable-dev-shm-usage',
-                '--disable-gpu'
+                '--disable-gpu',
+                '--disable-extensions',
+                '--no-first-run',
+                '--single-process',
+                '--no-zygote'
             ]
         }
     });
@@ -38,22 +57,29 @@ const createWhatsAppClient = () => {
     client.on('qr', (code) => {
         qr = code;
         console.log('Nuevo código QR generado');
-        // Enviar QR a todos los clientes conectados
         wss.clients.forEach((client) => {
             if (client.readyState === WebSocket.OPEN) {
                 client.send(JSON.stringify({ type: 'qr', code: qr }));
             }
         });
-        qrcode.generate(qr, { small: true }); // Mostrar en consola también
+        qrcode.generate(qr, { small: true });
     });
 
     client.on('ready', () => {
         console.log('Cliente WhatsApp listo');
         qr = null;
-        // Notificar a todos los clientes
         wss.clients.forEach((client) => {
             if (client.readyState === WebSocket.OPEN) {
                 client.send(JSON.stringify({ type: 'ready' }));
+            }
+        });
+    });
+
+    client.on('authenticated', () => {
+        console.log('Cliente autenticado');
+        wss.clients.forEach((client) => {
+            if (client.readyState === WebSocket.OPEN) {
+                client.send(JSON.stringify({ type: 'authenticated' }));
             }
         });
     });
@@ -63,7 +89,10 @@ const createWhatsAppClient = () => {
         qr = null;
         wss.clients.forEach((client) => {
             if (client.readyState === WebSocket.OPEN) {
-                client.send(JSON.stringify({ type: 'disconnected' }));
+                client.send(JSON.stringify({ 
+                    type: 'disconnected',
+                    reason: reason 
+                }));
             }
         });
     });
@@ -71,25 +100,13 @@ const createWhatsAppClient = () => {
     return client;
 };
 
-// Endpoint de health check
-app.get('/health', (req, res) => {
-    res.json({ 
-        status: 'ok',
-        timestamp: new Date().toISOString(),
-        clientActive: client !== null
-    });
-});
-
-// Manejar conexiones WebSocket
 wss.on('connection', (ws) => {
     console.log('Nueva conexión establecida');
 
-    // Enviar QR existente si hay uno
     if (qr) {
         ws.send(JSON.stringify({ type: 'qr', code: qr }));
     }
 
-    // Si el cliente ya está listo
     if (client && client.info) {
         ws.send(JSON.stringify({ type: 'ready' }));
     }
@@ -153,7 +170,6 @@ wss.on('connection', (ws) => {
     });
 });
 
-// Manejo de errores
 process.on('uncaughtException', (error) => {
     console.error('Error no capturado:', error);
 });
@@ -162,8 +178,7 @@ process.on('unhandledRejection', (error) => {
     console.error('Promesa rechazada no manejada:', error);
 });
 
-// Iniciar servidor
 const PORT = process.env.PORT || 3000;
-server.listen(PORT, () => {
+server.listen(PORT, '0.0.0.0', () => {
     console.log(`Servidor corriendo en puerto ${PORT}`);
 });
