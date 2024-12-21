@@ -37,6 +37,7 @@ app.get('/health', (req, res) => {
     });
 });
 
+// Crear cliente de WhatsApp
 const createWhatsAppClient = () => {
     const client = new Client({
         puppeteer: {
@@ -57,9 +58,9 @@ const createWhatsAppClient = () => {
     client.on('qr', (code) => {
         qr = code;
         console.log('Nuevo código QR generado');
-        wss.clients.forEach((client) => {
-            if (client.readyState === WebSocket.OPEN) {
-                client.send(JSON.stringify({ type: 'qr', code: qr }));
+        wss.clients.forEach((ws) => {
+            if (ws.readyState === WebSocket.OPEN) {
+                ws.send(JSON.stringify({ type: 'qr', code: qr }));
             }
         });
         qrcode.generate(qr, { small: true });
@@ -68,18 +69,18 @@ const createWhatsAppClient = () => {
     client.on('ready', () => {
         console.log('Cliente WhatsApp listo');
         qr = null;
-        wss.clients.forEach((client) => {
-            if (client.readyState === WebSocket.OPEN) {
-                client.send(JSON.stringify({ type: 'ready' }));
+        wss.clients.forEach((ws) => {
+            if (ws.readyState === WebSocket.OPEN) {
+                ws.send(JSON.stringify({ type: 'ready' }));
             }
         });
     });
 
     client.on('authenticated', () => {
         console.log('Cliente autenticado');
-        wss.clients.forEach((client) => {
-            if (client.readyState === WebSocket.OPEN) {
-                client.send(JSON.stringify({ type: 'authenticated' }));
+        wss.clients.forEach((ws) => {
+            if (ws.readyState === WebSocket.OPEN) {
+                ws.send(JSON.stringify({ type: 'authenticated' }));
             }
         });
     });
@@ -87,9 +88,9 @@ const createWhatsAppClient = () => {
     client.on('disconnected', (reason) => {
         console.log('Cliente WhatsApp desconectado:', reason);
         qr = null;
-        wss.clients.forEach((client) => {
-            if (client.readyState === WebSocket.OPEN) {
-                client.send(JSON.stringify({ 
+        wss.clients.forEach((ws) => {
+            if (ws.readyState === WebSocket.OPEN) {
+                ws.send(JSON.stringify({ 
                     type: 'disconnected',
                     reason: reason 
                 }));
@@ -100,6 +101,7 @@ const createWhatsAppClient = () => {
     return client;
 };
 
+// Configuración del WebSocket
 wss.on('connection', (ws) => {
     console.log('Nueva conexión establecida');
 
@@ -170,6 +172,7 @@ wss.on('connection', (ws) => {
     });
 });
 
+// Manejo de errores globales
 process.on('uncaughtException', (error) => {
     console.error('Error no capturado:', error);
 });
@@ -178,6 +181,7 @@ process.on('unhandledRejection', (error) => {
     console.error('Promesa rechazada no manejada:', error);
 });
 
+// Iniciar el servidor
 const PORT = process.env.PORT || 3000;
 server.listen(PORT, '0.0.0.0', () => {
     console.log(`Servidor corriendo en puerto ${PORT}`);
