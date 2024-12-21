@@ -2,7 +2,7 @@ const express = require('express');
 const { createServer } = require('http');
 const WebSocket = require('ws');
 const dotenv = require('dotenv');
-const { Client } = require('whatsapp-web.js');
+const { Client, LocalAuth } = require('whatsapp-web.js');
 const qrcode = require('qrcode-terminal');
 
 dotenv.config();
@@ -39,6 +39,7 @@ app.get('/health', (req, res) => {
 
 const createWhatsAppClient = () => {
     const client = new Client({
+        authStrategy: new LocalAuth(),
         puppeteer: {
             headless: true,
             args: [
@@ -51,6 +52,14 @@ const createWhatsAppClient = () => {
                 '--single-process',
                 '--no-zygote'
             ]
+        }
+    });
+
+    // Manejar mensajes entrantes
+    client.on('message', async (msg) => {
+        // Respuesta automática
+        if (msg.body.toLowerCase() === 'hola') {
+            await client.sendMessage(msg.from, '¡Hola! Soy un bot automático. ¿En qué puedo ayudarte?');
         }
     });
 
