@@ -97,6 +97,44 @@ const createWhatsAppClient = () => {
         });
     });
 
+    // Añade manejo de errores específicos
+    client.on('auth_failure', (msg) => {
+        console.error('Error de autenticación:', msg);
+        qr = null;
+        wss.clients.forEach((wsClient) => {
+            if (wsClient.readyState === WebSocket.OPEN) {
+                wsClient.send(JSON.stringify({ 
+                    type: 'error', 
+                    message: 'Error de autenticación' 
+                }));
+            }
+        });
+    });
+
+    // Evento de error más detallado
+    client.on('error', (err) => {
+        console.error('Error crítico del cliente:', err);
+        qr = null;
+        
+        // Intenta destruir el cliente de manera segura
+        try {
+            if (client && typeof client.destroy === 'function') {
+                client.destroy();
+            }
+        } catch (destroyError) {
+            console.error('Error al destruir el cliente:', destroyError);
+        }
+
+        wss.clients.forEach((wsClient) => {
+            if (wsClient.readyState === WebSocket.OPEN) {
+                wsClient.send(JSON.stringify({ 
+                    type: 'error', 
+                    message: 'Error crítico del cliente WhatsApp' 
+                }));
+            }
+        });
+    });
+
     return client;
 };
 
@@ -120,13 +158,26 @@ wss.on('connection', (ws) => {
                 case 'start':
                     if (!client) {
                         client = createWhatsAppClient();
-                        await client.initialize();
+                        try {
+                            await client.initialize();
+                        } catch (initError) {
+                            console.error('Error inicializando cliente:', initError);
+                            client = null;
+                            ws.send(JSON.stringify({ 
+                                type: 'error', 
+                                message: 'No se pudo inicializar el cliente' 
+                            }));
+                        }
                     }
                     break;
 
                 case 'stop':
                     if (client) {
-                        await client.destroy();
+                        try {
+                            await client.destroy();
+                        } catch (destroyError) {
+                            console.error('Error al detener cliente:', destroyError);
+                        }
                         client = null;
                         qr = null;
                     }
@@ -134,10 +185,23 @@ wss.on('connection', (ws) => {
 
                 case 'reset':
                     if (client) {
-                        await client.destroy();
+                        try {
+                            await client.destroy();
+                        } catch (destroyError) {
+                            console.error('Error al reiniciar cliente:', destroyError);
+                        }
                     }
                     client = createWhatsAppClient();
-                    await client.initialize();
+                    try {
+                        await client.initialize();
+                    } catch (initError) {
+                        console.error('Error reinicializando cliente:', initError);
+                        client = null;
+                        ws.send(JSON.stringify({ 
+                            type: 'error', 
+                            message: 'No se pudo reiniciar el cliente' 
+                        }));
+                    }
                     break;
 
                 case 'ping':
@@ -170,6 +234,7 @@ wss.on('connection', (ws) => {
     });
 });
 
+// Manejo de errores globales
 process.on('uncaughtException', (error) => {
     console.error('Error no capturado:', error);
 });
