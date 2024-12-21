@@ -2,11 +2,12 @@ const express = require('express');
 const { createServer } = require('http');
 const WebSocket = require('ws');
 const dotenv = require('dotenv');
-const makeWASocket = require('@whiskeysockets/baileys').default;
+const makeWASocket = require('@adiwajshing/baileys').default;
 const { 
     useMultiFileAuthState, 
-    DisconnectReason 
-} = require('@whiskeysockets/baileys');
+    DisconnectReason,
+    fetchLatestBaileysVersion
+} = require('@adiwajshing/baileys');
 const qrcode = require('qrcode-terminal');
 const pino = require('pino');
 
@@ -18,7 +19,7 @@ const wss = new WebSocket.Server({ server });
 
 let sock = null;
 let qr = null;
-const logger = pino();
+const logger = pino({ level: 'silent' });
 
 // Configurar CORS
 app.use((req, res, next) => {
@@ -44,54 +45,62 @@ app.get('/health', (req, res) => {
 });
 
 const createWhatsAppClient = async () => {
-    const { state, saveCreds } = await useMultiFileAuthState('baileys_auth');
-    
-    const socket = makeWASocket({
-        printQRInTerminal: true,
-        auth: state,
-        logger: logger,
-        browser: ['ANM Bot', 'Chrome', '4.0.0']
-    });
+    try {
+        const { version } = await fetchLatestBaileysVersion();
+        const { state, saveCreds } = await useMultiFileAuthState('baileys_auth');
+        
+        const socket = makeWASocket({
+            version,
+            printQRInTerminal: true,
+            auth: state,
+            logger: logger,
+            browser: ['ANM Bot', 'Chrome', '4.0.0'],
+            generateHighQualityLinkPreview: true
+        });
 
-    socket.ev.on('connection.update', async (update) => {
-        const { connection, lastDisconnect, qr: newQr } = update;
+        socket.ev.on('connection.update', async (update) => {
+            const { connection, lastDisconnect, qr: newQr } = update;
 
-        if (newQr) {
-            qr = newQr;
-            console.log('QR generado');
-            wss.clients.forEach((client) => {
-                if (client.readyState === WebSocket.OPEN) {
-                    client.send(JSON.stringify({ type: 'qr', code: qr }));
-                }
-            });
-            qrcode.generate(qr, { small: true });
-        }
-
-        if (connection === 'close') {
-            const shouldReconnect = 
-                lastDisconnect?.error?.output?.statusCode !== DisconnectReason.loggedOut;
-            
-            console.log('Conexión cerrada. Reconectando:', shouldReconnect);
-            
-            if (shouldReconnect) {
-                await createWhatsAppClient();
+            if (newQr) {
+                qr = newQr;
+                console.log('QR generado');
+                wss.clients.forEach((client) => {
+                    if (client.readyState === WebSocket.OPEN) {
+                        client.send(JSON.stringify({ type: 'qr', code: qr }));
+                    }
+                });
+                qrcode.generate(qr, { small: true });
             }
-        }
 
-        if (connection === 'open') {
-            console.log('Conectado exitosamente');
-            qr = null;
-            wss.clients.forEach((client) => {
-                if (client.readyState === WebSocket.OPEN) {
-                    client.send(JSON.stringify({ type: 'ready' }));
+            if (connection === 'close') {
+                const shouldReconnect = 
+                    lastDisconnect?.error?.output?.statusCode !== DisconnectReason.loggedOut;
+                
+                console.log('Conexión cerrada. Reconectando:', shouldReconnect);
+                
+                if (shouldReconnect) {
+                    await createWhatsAppClient();
                 }
-            });
-        }
-    });
+            }
 
-    socket.ev.on('creds.update', saveCreds);
+            if (connection === 'open') {
+                console.log('Conectado exitosamente');
+                qr = null;
+                wss.clients.forEach((client) => {
+                    if (client.readyState === WebSocket.OPEN) {
+                        client.send(JSON.stringify({ type: 'ready' }));
+                    }
+                });
+            }
+        });
 
-    return socket;
+        socket.ev.on('creds.update', saveCreds);
+
+        return socket;
+    } catch (error) {
+        console.error('Error creando cliente WhatsApp:', error);
+        throw error;
+    }
 };
 
 wss.on('connection', (ws) => {
@@ -115,6 +124,7 @@ wss.on('connection', (ws) => {
                     if (!sock) {
                         try {
                             sock = await createWhatsAppClient();
+                            ws.send(JSON.stringify({ type: 'started' }));
                         } catch (error) {
                             console.error('Error inicializando cliente:', error);
                             ws.send(JSON.stringify({ 
@@ -128,10 +138,15 @@ wss.on('connection', (ws) => {
                 case 'stop':
                     if (sock) {
                         try {
-                            sock.end();
+                            await sock.logout();
                             sock = null;
+                            ws.send(JSON.stringify({ type: 'stopped' }));
                         } catch (error) {
                             console.error('Error deteniendo cliente:', error);
+                            ws.send(JSON.stringify({ 
+                                type: 'error', 
+                                message: 'Error deteniendo el cliente' 
+                            }));
                         }
                     }
                     break;
@@ -139,12 +154,21 @@ wss.on('connection', (ws) => {
                 case 'reset':
                     if (sock) {
                         try {
-                            sock.end();
+                            await sock.logout();
                         } catch (error) {
                             console.error('Error reiniciando cliente:', error);
                         }
                     }
-                    sock = await createWhatsAppClient();
+                    try {
+                        sock = await createWhatsAppClient();
+                        ws.send(JSON.stringify({ type: 'reset' }));
+                    } catch (error) {
+                        console.error('Error recreando cliente:', error);
+                        ws.send(JSON.stringify({ 
+                            type: 'error', 
+                            message: 'No se pudo reiniciar el cliente' 
+                        }));
+                    }
                     break;
 
                 case 'ping':
@@ -156,8 +180,13 @@ wss.on('connection', (ws) => {
                         ws.send(JSON.stringify({ type: 'ready' }));
                     } else if (qr) {
                         ws.send(JSON.stringify({ type: 'qr', code: qr }));
+                    } else {
+                        ws.send(JSON.stringify({ type: 'disconnected' }));
                     }
                     break;
+
+                default:
+                    console.log('Tipo de mensaje no reconocido:', data.type);
             }
         } catch (error) {
             console.error('Error procesando mensaje:', error);
@@ -169,7 +198,7 @@ wss.on('connection', (ws) => {
     });
 
     ws.on('close', () => {
-        console.log('Cliente desconectado');
+        console.log('Cliente WebSocket desconectado');
     });
 
     ws.on('error', (error) => {
