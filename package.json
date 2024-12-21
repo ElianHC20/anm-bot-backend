@@ -1,20 +1,23 @@
 {
-  "name": "anm-bot-backend",
-  "version": "1.0.0",
-  "main": "server.js",
-  "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1",
-    "start": "node server.js"
-  },
-  "keywords": [],
-  "author": "",
-  "license": "ISC",
-  "description": "",
-  "dependencies": {
-    "dotenv": "^16.4.7",
-    "express": "^4.21.2",
-    "qrcode-terminal": "^0.12.0",
-    "whatsapp-web.js": "^1.26.0",
-    "ws": "^8.18.0"
-  }
+   "name": "anm-bot-backend",
+   "version": "1.0.0",
+   "main": "server.js",
+   "scripts": {
+     "test": "echo \"Error: no test specified\" && exit 1",
+     "start": "node --trace-warnings server.js"
+   },
+   "keywords": [],
+   "author": "",
+   "license": "ISC",
+   "description": "",
+   "engines": {
+     "node": ">=16.0.0"
+   },
+   "dependencies": {
+     "dotenv": "^16.4.7",
+     "express": "^4.21.2",
+     "qrcode-terminal": "^0.12.0",
+     "whatsapp-web.js": "^1.26.0",
+     "ws": "^8.18.0"
+   }
 }
