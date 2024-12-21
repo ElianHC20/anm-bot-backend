@@ -50,46 +50,65 @@ const createWhatsAppClient = async () => {
             version,
             printQRInTerminal: true,
             auth: state,
-            logger: logger,
+            logger: pino({ level: 'error' }),
             browser: ['ANM Bot', 'Chrome', '4.0.0'],
-            generateHighQualityLinkPreview: true
+            generateHighQualityLinkPreview: true,
+            // Configuraciones adicionales para mejorar estabilidad
+            keepAliveIntervalMs: 60000, // Mantener conexión activa
+            queueInit: true, // Encolar inicialización
+            markOnlineOnConnect: true // Marcar como en línea
         });
 
+        // Manejador de actualización de conexión más detallado
         sock.ev.on('connection.update', async (update) => {
+            console.log('Detalles de conexión completos:', JSON.stringify(update, null, 2));
+
             const { connection, lastDisconnect, qr: newQr } = update;
 
-            console.log('Conexión actualizada:', update);
-
+            // Manejo específico de QR
             if (newQr) {
                 qr = newQr;
                 console.log('Nuevo QR generado');
                 
-                // Broadcast QR a todos los clientes WebSocket
+                // Broadcast del QR a todos los clientes WebSocket
                 wss.clients.forEach((client) => {
                     if (client.readyState === WebSocket.OPEN) {
-                        client.send(JSON.stringify({ 
-                            type: 'qr', 
-                            code: qr 
-                        }));
+                        try {
+                            client.send(JSON.stringify({ 
+                                type: 'qr', 
+                                code: qr 
+                            }));
+                        } catch (sendError) {
+                            console.error('Error enviando QR:', sendError);
+                        }
                     }
                 });
 
+                // Generar QR en terminal
                 qrcode.generate(qr, { small: true });
             }
 
+            // Manejo detallado de desconexiones
             if (connection === 'close') {
+                console.error('Conexión cerrada. Detalles:', lastDisconnect?.error);
+                
                 const shouldReconnect = 
                     lastDisconnect?.error?.output?.statusCode !== DisconnectReason.loggedOut;
                 
-                console.log('Conexión cerrada. Reconectando:', shouldReconnect);
+                console.log('¿Debe reconectar?', shouldReconnect);
                 
                 if (shouldReconnect) {
-                    await createWhatsAppClient();
+                    console.log('Intentando reconectar...');
+                    // Esperar un poco antes de reconectar
+                    setTimeout(async () => {
+                        await createWhatsAppClient();
+                    }, 5000);
                 }
             }
 
+            // Conexión exitosa
             if (connection === 'open') {
-                console.log('Cliente WhatsApp conectado');
+                console.log('Cliente WhatsApp conectado exitosamente');
                 qr = null;
                 wss.clients.forEach((client) => {
                     if (client.readyState === WebSocket.OPEN) {
@@ -99,11 +118,12 @@ const createWhatsAppClient = async () => {
             }
         });
 
+        // Guardar credenciales
         sock.ev.on('creds.update', saveCreds);
 
         return sock;
     } catch (error) {
-        console.error('Error creando cliente:', error);
+        console.error('Error CRÍTICO creando cliente:', error);
         throw error;
     }
 };
@@ -111,8 +131,9 @@ const createWhatsAppClient = async () => {
 wss.on('connection', (ws) => {
     console.log('Nueva conexión WebSocket establecida');
 
-    // Si hay QR pendiente, enviarlo
+    // Enviar QR pendiente si existe
     if (qr) {
+        console.log('Enviando QR pendiente');
         ws.send(JSON.stringify({ type: 'qr', code: qr }));
     }
 
@@ -124,23 +145,54 @@ wss.on('connection', (ws) => {
             switch (data.type) {
                 case 'start':
                     if (!client) {
-                        client = await createWhatsAppClient();
+                        try {
+                            client = await createWhatsAppClient();
+                            ws.send(JSON.stringify({ type: 'started' }));
+                        } catch (startError) {
+                            console.error('Error iniciando cliente:', startError);
+                            ws.send(JSON.stringify({ 
+                                type: 'error', 
+                                message: 'No se pudo iniciar el cliente' 
+                            }));
+                        }
                     }
                     break;
 
                 case 'stop':
                     if (client) {
-                        await client.logout();
-                        client = null;
-                        qr = null;
+                        try {
+                            await client.logout();
+                            client = null;
+                            qr = null;
+                            ws.send(JSON.stringify({ type: 'stopped' }));
+                        } catch (stopError) {
+                            console.error('Error deteniendo cliente:', stopError);
+                            ws.send(JSON.stringify({ 
+                                type: 'error', 
+                                message: 'Error deteniendo el cliente' 
+                            }));
+                        }
                     }
                     break;
 
                 case 'reset':
                     if (client) {
-                        await client.logout();
+                        try {
+                            await client.logout();
+                        } catch (resetError) {
+                            console.error('Error haciendo logout:', resetError);
+                        }
                     }
-                    client = await createWhatsAppClient();
+                    try {
+                        client = await createWhatsAppClient();
+                        ws.send(JSON.stringify({ type: 'reset' }));
+                    } catch (recreateError) {
+                        console.error('Error recreando cliente:', recreateError);
+                        ws.send(JSON.stringify({ 
+                            type: 'error', 
+                            message: 'No se pudo reiniciar el cliente' 
+                        }));
+                    }
                     break;
 
                 case 'ping':
@@ -152,16 +204,22 @@ wss.on('connection', (ws) => {
                         ws.send(JSON.stringify({ type: 'ready' }));
                     } else if (qr) {
                         ws.send(JSON.stringify({ type: 'qr', code: qr }));
+                    } else {
+                        ws.send(JSON.stringify({ type: 'disconnected' }));
                     }
                     break;
             }
         } catch (error) {
             console.error('Error procesando mensaje:', error);
-            ws.send(JSON.stringify({ type: 'error', message: error.message }));
+            ws.send(JSON.stringify({ 
+                type: 'error', 
+                message: error.message 
+            }));
         }
     });
 });
 
+// Manejo de errores globales
 process.on('uncaughtException', (error) => {
     console.error('Error no capturado:', error);
 });
