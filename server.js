@@ -6,7 +6,8 @@ const makeWASocket = require('@adiwajshing/baileys').default;
 const { 
     useMultiFileAuthState, 
     DisconnectReason,
-    fetchLatestBaileysVersion
+    fetchLatestBaileysVersion,
+    makeInMemoryStore
 } = require('@adiwajshing/baileys');
 const qrcode = require('qrcode-terminal');
 const pino = require('pino');
@@ -19,6 +20,10 @@ const wss = new WebSocket.Server({ server });
 
 let client = null;
 let qr = null;
+const store = makeInMemoryStore({ 
+    logger: pino().child({ level: 'silent', stream: 'store' }) 
+});
+
 const logger = pino({ level: 'silent' });
 
 app.use((req, res, next) => {
@@ -53,13 +58,24 @@ const createWhatsAppClient = async () => {
             logger: pino({ level: 'error' }),
             browser: ['ANM Bot', 'Chrome', '4.0.0'],
             generateHighQualityLinkPreview: true,
-            // Configuraciones adicionales para mejorar estabilidad
-            keepAliveIntervalMs: 60000, // Mantener conexión activa
-            queueInit: true, // Encolar inicialización
-            markOnlineOnConnect: true // Marcar como en línea
+            
+            // Configuraciones agresivas de conexión
+            connectTimeoutMs: 60000, // 1 minuto de timeout
+            maxRetries: 5, // Máximo 5 reintentos
+            retryRequestDelayMs: 10000, // 10 segundos entre reintentos
+            
+            // Configuraciones de WebSocket
+            socketConfig: {
+                keepAlive: true,
+                reconnection: true,
+                reconnectionAttempts: 5,
+                reconnectionDelay: 10000
+            }
         });
 
-        // Manejador de actualización de conexión más detallado
+        // Configurar store
+        store.bind(sock.ev);
+
         sock.ev.on('connection.update', async (update) => {
             console.log('Detalles de conexión completos:', JSON.stringify(update, null, 2));
 
@@ -102,7 +118,7 @@ const createWhatsAppClient = async () => {
                     // Esperar un poco antes de reconectar
                     setTimeout(async () => {
                         await createWhatsAppClient();
-                    }, 5000);
+                    }, 10000);
                 }
             }
 
