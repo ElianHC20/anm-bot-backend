@@ -1,22 +1,25 @@
-FROM node:16-bullseye-slim
+FROM node:16-slim
 
-# Evitar preguntas durante la instalación
-ENV DEBIAN_FRONTEND=noninteractive
-
-# Instalar Chromium y dependencias
+# Instalar dependencias necesarias
 RUN apt-get update \
     && apt-get install -y \
-    chromium \
-    chromium-sandbox \
+    wget \
+    gnupg2 \
+    apt-transport-https \
+    ca-certificates \
+    && wget -q -O - https://dl-ssl.google.com/linux/linux_signing_key.pub | gpg --dearmor -o /usr/share/keyrings/google-chrome.gpg \
+    && echo "deb [arch=amd64 signed-by=/usr/share/keyrings/google-chrome.gpg] http://dl.google.com/linux/chrome/deb/ stable main" > /etc/apt/sources.list.d/google-chrome.list \
+    && apt-get update \
+    && apt-get install -y \
+    google-chrome-stable \
+    fonts-ipafont-gothic \
+    fonts-wqy-zenhei \
+    fonts-thai-tlwg \
+    fonts-kacst \
     fonts-freefont-ttf \
     --no-install-recommends \
     && rm -rf /var/lib/apt/lists/* \
     && apt-get clean
-
-# Configurar Chrome
-ENV CHROME_BIN=/usr/bin/chromium
-ENV CHROME_PATH=/usr/lib/chromium/
-ENV PUPPETEER_SKIP_CHROMIUM_DOWNLOAD=true
 
 # Crear directorio de trabajo
 WORKDIR /app
@@ -27,14 +30,11 @@ COPY package*.json ./
 # Instalar dependencias
 RUN npm install
 
-# Copiar el resto del código
+# Copiar el resto de los archivos
 COPY . .
 
-# Crear directorio para archivos estáticos
-RUN mkdir -p public
-
-# Exponer puerto
+# Exponer el puerto
 EXPOSE 3000
 
-# Iniciar la aplicación
+# Comando para iniciar la aplicación
 CMD ["npm", "start"]
