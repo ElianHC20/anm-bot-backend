@@ -178,6 +178,42 @@ const transferToAgent = async (from, customerName) => {
     }
 };
 
+// Función para procesar los comandos del menú
+const processMenuCommand = async (from, customerName, messageBody, state) => {
+    switch (messageBody) {
+        case '1':
+        case '2':
+        case '3':
+        case '4':
+            const service = services[messageBody];
+            let optionsMessage = `${service.name}:\n\n`;
+            Object.entries(service.options).forEach(([key, value]) => {
+                optionsMessage += `${key}) ${value}\n`;
+            });
+            optionsMessage += '\nResponde con la letra de la opción para más información.';
+            state.stage = 'service_' + messageBody;
+            await client.sendMessage(from, optionsMessage);
+            break;
+        
+        case '5':
+            let combosMessage = '🎁 Combos Promocionales:\n\n';
+            Object.entries(combos).forEach(([key, value]) => {
+                combosMessage += `${key}) ${value}\n\n`;
+            });
+            combosMessage += '\nResponde con el número del combo para más información.';
+            state.stage = 'combos';
+            await client.sendMessage(from, combosMessage);
+            break;
+        
+        case '6':
+            await transferToAgent(from, customerName);
+            break;
+        
+        default:
+            await client.sendMessage(from, '❌ Opción no válida. Por favor, selecciona una opción del menú (1-6).');
+    }
+};
+
 // Función para crear el cliente de WhatsApp
 const createWhatsAppClient = () => {
     const client = new Client({
@@ -212,8 +248,7 @@ const createWhatsAppClient = () => {
                     chatStates.set(from, {
                         stage: 'menu',
                         warningShown: false,
-                        withAgent: false,
-                        firstMessage: true
+                        withAgent: false
                     });
                     await sendMainMenu(from, customerName);
                     setInactivityTimers(from);
@@ -222,14 +257,7 @@ const createWhatsAppClient = () => {
             }
 
             const state = chatStates.get(from);
-
-            // Si es el primer mensaje después del menú, solo actualizar el estado
-            if (state.firstMessage) {
-                state.firstMessage = false;
-                setInactivityTimers(from);
-                return;
-            }
-
+            
             // Resetear temporizadores
             setInactivityTimers(from);
             state.warningShown = false;
@@ -255,38 +283,7 @@ const createWhatsAppClient = () => {
             // Manejar estados de la conversación
             switch (state.stage) {
                 case 'menu':
-                    switch (messageBody) {
-                        case '1':
-                        case '2':
-                        case '3':
-                        case '4':
-                            const service = services[messageBody];
-                            let optionsMessage = `${service.name}:\n\n`;
-                            Object.entries(service.options).forEach(([key, value]) => {
-                                optionsMessage += `${key}) ${value}\n`;
-                            });
-                            optionsMessage += '\nResponde con la letra de la opción para más información.';
-                            state.stage = 'service_' + messageBody;
-                            await client.sendMessage(from, optionsMessage);
-                            break;
-                        
-                        case '5':
-                            let combosMessage = '🎁 Combos Promocionales:\n\n';
-                            Object.entries(combos).forEach(([key, value]) => {
-                                combosMessage += `${key}) ${value}\n\n`;
-                            });
-                            combosMessage += '\nResponde con el número del combo para más información.';
-                            state.stage = 'combos';
-                            await client.sendMessage(from, combosMessage);
-                            break;
-                        
-                        case '6':
-                            await transferToAgent(from, customerName);
-                            break;
-                        
-                        default:
-                            await client.sendMessage(from, '❌ Opción no válida. Por favor, selecciona una opción del menú (1-6).');
-                    }
+                    await processMenuCommand(from, customerName, messageBody, state);
                     break;
 
                 case 'service_1':
