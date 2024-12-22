@@ -165,7 +165,11 @@ const createWhatsAppClient = () => {
         const from = msg.from;
         const messageBody = msg.body.toLowerCase();
         
-        // Obtener o crear estado del chat
+        // Obtener el nombre del contacto
+        const contact = await msg.getContact();
+        const customerName = contact.pushname || 'Cliente';
+
+        // Si es un nuevo chat o no existe el estado, mostrar el menú principal
         if (!chatStates.has(from)) {
             chatStates.set(from, {
                 stage: 'menu',
@@ -173,15 +177,13 @@ const createWhatsAppClient = () => {
                 warningShown: false,
                 withAgent: false
             });
+            await sendMainMenu(from, customerName);
+            return;
         }
 
         const state = chatStates.get(from);
         state.lastMessage = Date.now();
         state.warningShown = false;
-
-        // Obtener el nombre del contacto
-        const contact = await msg.getContact();
-        const customerName = contact.pushname || 'Cliente';
 
         // Si está con un asesor, solo procesar "menu" para volver
         if (state.withAgent) {
@@ -260,9 +262,13 @@ const createWhatsAppClient = () => {
                 break;
 
             default:
+                // Si el estado es desconocido, volver al menú principal
                 state.stage = 'menu';
                 await sendMainMenu(from, customerName);
         }
+
+        // Programar chequeo de inactividad
+        setTimeout(() => handleInactivity(from), 120000);
     });
 
     client.on('qr', (code) => {
@@ -312,6 +318,21 @@ const createWhatsAppClient = () => {
     return client;
 };
 
+// Rutas de Express
+app.get('/', (req, res) => {
+    res.send('ANM Bot Server Running');
+});
+
+app.get('/health', (req, res) => {
+    res.json({ 
+        status: 'ok',
+        timestamp: new Date().toISOString(),
+        clientActive: client !== null,
+        websocketConnections: wss.clients.size
+    });
+});
+
+// WebSocket handling
 wss.on('connection', (ws) => {
     console.log('Nueva conexión establecida');
 
