@@ -208,17 +208,27 @@ const createWhatsAppClient = () => {
 
             // Manejar nuevo chat o reinicio
             if (!chatStates.has(from)) {
-                chatStates.set(from, {
-                    stage: 'menu',
-                    warningShown: false,
-                    withAgent: false
-                });
-                await sendMainMenu(from, customerName);
-                setInactivityTimers(from);
+                if (messageBody.includes('hola') || messageBody.includes('anm')) {
+                    chatStates.set(from, {
+                        stage: 'menu',
+                        warningShown: false,
+                        withAgent: false,
+                        firstMessage: true
+                    });
+                    await sendMainMenu(from, customerName);
+                    setInactivityTimers(from);
+                }
                 return;
             }
 
             const state = chatStates.get(from);
+
+            // Si es el primer mensaje después del menú, solo actualizar el estado
+            if (state.firstMessage) {
+                state.firstMessage = false;
+                setInactivityTimers(from);
+                return;
+            }
 
             // Resetear temporizadores
             setInactivityTimers(from);
@@ -383,7 +393,6 @@ wss.on('connection', (ws) => {
     if (qr) {
         ws.send(JSON.stringify({ type: 'qr', code: qr }));
     }
-
     if (client && client.info) {
         ws.send(JSON.stringify({ type: 'ready' }));
     }
@@ -392,6 +401,7 @@ wss.on('connection', (ws) => {
         try {
             const data = JSON.parse(message);
             console.log('Mensaje recibido:', data);
+
             switch (data.type) {
                 case 'start':
                     if (!client) {
