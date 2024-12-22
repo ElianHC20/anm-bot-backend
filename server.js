@@ -82,12 +82,24 @@ const handleInactivity = async (from) => {
             // Programar reinicio después de 2 minutos adicionales
             setTimeout(async () => {
                 if (Date.now() - state.lastMessage > 240000) { // 4 minutos en total
-                    await client.sendMessage(from, '🔄 Chat reiniciado por inactividad. Escribe "hola" para comenzar nuevamente.');
+                    await client.sendMessage(from, '🔄 Chat reiniciado por inactividad. Cualquier mensaje que envíes iniciará una nueva conversación.');
                     chatStates.delete(from);
                 }
             }, 120000);
         }
     }
+};
+
+const sendMainMenu = async (from, customerName) => {
+    const menu = `¡Hola ${customerName}! 👋\nBienvenido a ANM. ¿En qué podemos ayudarte?\n\n` +
+                '1️⃣ Animación 3D y 2D\n' +
+                '2️⃣ Marketing\n' +
+                '3️⃣ Diseño Web\n' +
+                '4️⃣ Apps y Chatbots\n' +
+                '5️⃣ Ver Combos Promocionales\n' +
+                '6️⃣ Hablar con un asesor\n\n' +
+                'Responde con el número de la opción que te interese.';
+    await client.sendMessage(from, menu);
 };
 
 const createWhatsAppClient = () => {
@@ -116,15 +128,22 @@ const createWhatsAppClient = () => {
         // Actualizar último mensaje
         if (!chatStates.has(from)) {
             chatStates.set(from, {
-                stage: 'start',
+                stage: 'menu',
                 lastMessage: Date.now(),
                 warningShown: false,
                 withAgent: false
             });
-        } else {
-            chatStates.get(from).lastMessage = Date.now();
-            chatStates.get(from).warningShown = false;
+            
+            // Obtener el nombre del contacto para el saludo inicial
+            const contact = await msg.getContact();
+            const customerName = contact.pushname || 'Cliente';
+            await sendMainMenu(from, customerName);
+            return;
         }
+
+        // Actualizar timestamp del último mensaje
+        chatStates.get(from).lastMessage = Date.now();
+        chatStates.get(from).warningShown = false;
 
         const state = chatStates.get(from);
         
@@ -138,19 +157,15 @@ const createWhatsAppClient = () => {
         const contact = await msg.getContact();
         const customerName = contact.pushname || 'Cliente';
 
-        if (messageBody === 'hola' || messageBody === 'menu') {
+        // Manejar comandos específicos
+        if (messageBody === 'menu') {
             state.stage = 'menu';
-            const menu = `¡Hola ${customerName}! 👋\nBienvenido a ANM. ¿En qué podemos ayudarte?\n\n` +
-                        '1️⃣ Animación 3D y 2D\n' +
-                        '2️⃣ Marketing\n' +
-                        '3️⃣ Diseño Web\n' +
-                        '4️⃣ Apps y Chatbots\n' +
-                        '5️⃣ Ver Combos Promocionales\n' +
-                        '6️⃣ Hablar con un asesor\n\n' +
-                        'Responde con el número de la opción que te interese.';
-            await client.sendMessage(from, menu);
+            await sendMainMenu(from, customerName);
+            return;
         }
-        else if (state.stage === 'menu') {
+
+        // Manejar estados de la conversación
+        if (state.stage === 'menu') {
             switch (messageBody) {
                 case '1':
                 case '2':
@@ -171,6 +186,7 @@ const createWhatsAppClient = () => {
                     Object.entries(combos).forEach(([key, value]) => {
                         combosMessage += `${key}) ${value}\n\n`;
                     });
+                    combosMessage += '\nEscribe "menu" para volver al menú principal.';
                     await client.sendMessage(from, combosMessage);
                     break;
                 
@@ -196,7 +212,6 @@ const createWhatsAppClient = () => {
         }
     });
 
-    // Resto del código existente...
     client.on('qr', (code) => {
         qr = code;
         console.log('Nuevo código QR generado');
@@ -244,7 +259,6 @@ const createWhatsAppClient = () => {
     return client;
 };
 
-// Resto del código existente...
 wss.on('connection', (ws) => {
     console.log('Nueva conexión establecida');
 
