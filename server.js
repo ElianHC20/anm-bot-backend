@@ -20,6 +20,14 @@ const chatStates = new Map();
 // Map para almacenar los temporizadores de los chats
 const chatTimers = new Map();
 
+// Array de variantes válidas para el comando menú
+const menuCommands = ['menu', 'menú', 'MENU', 'MENÚ', 'Menu', 'Menú'];
+
+// Función para verificar si un mensaje es un comando de menú
+const isMenuCommand = (message) => {
+    return menuCommands.includes(message.trim());
+};
+
 // Configuración de servicios y precios
 const services = {
     '1': {
@@ -146,7 +154,7 @@ const transferToAgent = async (from, customerName) => {
             '👨‍💼 Te estamos transfiriendo con un asesor.\n' +
             'El bot quedará desactivado mientras hablas con el asesor.\n\n' +
             'Si no hay respuesta en 2 minutos, el chat se reiniciará automáticamente.\n\n' +
-            'Escribe "menu" en cualquier momento para volver al menú principal.'
+            'Escribe "menú" o "menu" en cualquier momento para volver al menú principal.'
         );
 
         // Configurar temporizadores específicos para el modo asesor
@@ -262,9 +270,9 @@ const createWhatsAppClient = () => {
             setInactivityTimers(from);
             state.warningShown = false;
 
-            // Si está con un asesor, solo procesar "menu"
+            // Si está con un asesor, solo procesar comando de menú
             if (state.withAgent) {
-                if (messageBody === 'menu') {
+                if (isMenuCommand(msg.body)) {
                     state.withAgent = false;
                     state.stage = 'menu';
                     await sendMainMenu(from, customerName);
@@ -272,8 +280,8 @@ const createWhatsAppClient = () => {
                 return;
             }
 
-            // Procesar comando "menu"
-            if (messageBody === 'menu') {
+            // Procesar comando de menú
+            if (isMenuCommand(msg.body)) {
                 state.stage = 'menu';
                 state.withAgent = false;
                 await sendMainMenu(from, customerName);
@@ -390,6 +398,7 @@ wss.on('connection', (ws) => {
     if (qr) {
         ws.send(JSON.stringify({ type: 'qr', code: qr }));
     }
+
     if (client && client.info) {
         ws.send(JSON.stringify({ type: 'ready' }));
     }
