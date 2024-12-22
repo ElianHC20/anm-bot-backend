@@ -250,17 +250,15 @@ const createWhatsAppClient = () => {
             const contact = await msg.getContact();
             const customerName = contact.pushname || 'Cliente';
 
-            // Manejar nuevo chat o reinicio
+            // Manejar nuevo chat o reinicio - responde a cualquier mensaje
             if (!chatStates.has(from)) {
-                if (messageBody.includes('hola') || messageBody.includes('anm')) {
-                    chatStates.set(from, {
-                        stage: 'menu',
-                        warningShown: false,
-                        withAgent: false
-                    });
-                    await sendMainMenu(from, customerName);
-                    setInactivityTimers(from);
-                }
+                chatStates.set(from, {
+                    stage: 'menu',
+                    warningShown: false,
+                    withAgent: false
+                });
+                await sendMainMenu(from, customerName);
+                setInactivityTimers(from);
                 return;
             }
 
