@@ -90,6 +90,46 @@ const handleInactivity = async (from) => {
     }
 };
 
+const transferToAgent = async (from, customerName) => {
+    const state = chatStates.get(from);
+    if (!state) return;
+
+    state.withAgent = true;
+    state.lastMessage = Date.now();
+    state.warningShown = false;
+
+    await client.sendMessage(from, 
+        '👨‍💼 Te estamos transfiriendo con un asesor. El bot quedará desactivado.\n\n' +
+        'Si no hay respuesta en 2 minutos, el chat se reiniciará automáticamente.\n\n' +
+        'Escribe "menu" en cualquier momento para volver al menú principal.'
+    );
+
+    // Iniciar temporizador de inactividad para el asesor
+    const checkAgentInactivity = async () => {
+        const currentState = chatStates.get(from);
+        if (!currentState || !currentState.withAgent) return;
+
+        if (Date.now() - currentState.lastMessage > 120000) { // 2 minutos
+            if (!currentState.warningShown) {
+                await client.sendMessage(from, '⚠️ Si no hay respuesta en los próximos 2 minutos, el chat se reiniciará automáticamente.');
+                currentState.warningShown = true;
+
+                // Programar reinicio después de 2 minutos adicionales
+                setTimeout(async () => {
+                    const finalState = chatStates.get(from);
+                    if (finalState && finalState.withAgent && Date.now() - finalState.lastMessage > 240000) {
+                        await client.sendMessage(from, '🔄 Chat reiniciado por inactividad. Cualquier mensaje que envíes iniciará una nueva conversación.');
+                        chatStates.delete(from);
+                    }
+                }, 120000);
+            }
+        }
+    };
+
+    // Iniciar chequeo de inactividad
+    setTimeout(checkAgentInactivity, 120000);
+};
+
 const sendMainMenu = async (from, customerName) => {
     const menu = `¡Hola ${customerName}! 👋\nBienvenido a ANM. ¿En qué podemos ayudarte?\n\n` +
                 '1️⃣ Animación 3D y 2D\n' +
@@ -125,7 +165,7 @@ const createWhatsAppClient = () => {
         const from = msg.from;
         const messageBody = msg.body.toLowerCase();
         
-        // Actualizar último mensaje
+        // Obtener o crear estado del chat
         if (!chatStates.has(from)) {
             chatStates.set(from, {
                 stage: 'menu',
@@ -133,82 +173,95 @@ const createWhatsAppClient = () => {
                 warningShown: false,
                 withAgent: false
             });
-            
-            // Obtener el nombre del contacto para el saludo inicial
-            const contact = await msg.getContact();
-            const customerName = contact.pushname || 'Cliente';
-            await sendMainMenu(from, customerName);
-            return;
         }
 
-        // Actualizar timestamp del último mensaje
-        chatStates.get(from).lastMessage = Date.now();
-        chatStates.get(from).warningShown = false;
-
         const state = chatStates.get(from);
-        
-        // Si está con un agente, no procesar mensajes
-        if (state.withAgent) return;
-
-        // Programar chequeo de inactividad
-        setTimeout(() => handleInactivity(from), 120000);
+        state.lastMessage = Date.now();
+        state.warningShown = false;
 
         // Obtener el nombre del contacto
         const contact = await msg.getContact();
         const customerName = contact.pushname || 'Cliente';
 
-        // Manejar comandos específicos
+        // Si está con un asesor, solo procesar "menu" para volver
+        if (state.withAgent) {
+            if (messageBody === 'menu') {
+                state.withAgent = false;
+                state.stage = 'menu';
+                await sendMainMenu(from, customerName);
+            }
+            return;
+        }
+
+        // Si es un mensaje de menú, reiniciar estado
         if (messageBody === 'menu') {
             state.stage = 'menu';
+            state.withAgent = false;
             await sendMainMenu(from, customerName);
             return;
         }
 
         // Manejar estados de la conversación
-        if (state.stage === 'menu') {
-            switch (messageBody) {
-                case '1':
-                case '2':
-                case '3':
-                case '4':
-                    const service = services[messageBody];
-                    let optionsMessage = `${service.name}:\n\n`;
-                    Object.entries(service.options).forEach(([key, value]) => {
-                        optionsMessage += `${key}) ${value}\n`;
-                    });
-                    optionsMessage += '\nResponde con la letra de la opción para más información.';
-                    state.stage = 'service_' + messageBody;
-                    await client.sendMessage(from, optionsMessage);
-                    break;
-                
-                case '5':
-                    let combosMessage = '🎁 Combos Promocionales:\n\n';
-                    Object.entries(combos).forEach(([key, value]) => {
-                        combosMessage += `${key}) ${value}\n\n`;
-                    });
-                    combosMessage += '\nEscribe "menu" para volver al menú principal.';
-                    await client.sendMessage(from, combosMessage);
-                    break;
-                
-                case '6':
-                    state.withAgent = true;
-                    await client.sendMessage(from, '👨‍💼 Te conectaremos con un asesor en breve. El bot quedará desactivado hasta que finalice tu conversación con el asesor.\n\nSi no hay respuesta en 2 minutos, el chat se reiniciará automáticamente.');
-                    break;
-                
-                default:
-                    await client.sendMessage(from, '❌ Opción no válida. Por favor, selecciona una opción del menú (1-6).');
-            }
-        }
-        else if (state.stage.startsWith('service_')) {
-            const serviceNum = state.stage.split('_')[1];
-            const service = services[serviceNum];
-            
-            if (service.options[messageBody]) {
-                await client.sendMessage(from, '📱 Un asesor se pondrá en contacto contigo pronto para brindarte más detalles sobre esta opción.\n\nEscribe "menu" para ver otras opciones.');
+        switch (state.stage) {
+            case 'menu':
+                switch (messageBody) {
+                    case '1':
+                    case '2':
+                    case '3':
+                    case '4':
+                        const service = services[messageBody];
+                        let optionsMessage = `${service.name}:\n\n`;
+                        Object.entries(service.options).forEach(([key, value]) => {
+                            optionsMessage += `${key}) ${value}\n`;
+                        });
+                        optionsMessage += '\nResponde con la letra de la opción para más información.';
+                        state.stage = 'service_' + messageBody;
+                        await client.sendMessage(from, optionsMessage);
+                        break;
+                    
+                    case '5':
+                        let combosMessage = '🎁 Combos Promocionales:\n\n';
+                        Object.entries(combos).forEach(([key, value]) => {
+                            combosMessage += `${key}) ${value}\n\n`;
+                        });
+                        combosMessage += '\nResponde con el número del combo para más información.';
+                        state.stage = 'combos';
+                        await client.sendMessage(from, combosMessage);
+                        break;
+                    
+                    case '6':
+                        await transferToAgent(from, customerName);
+                        break;
+                    
+                    default:
+                        await client.sendMessage(from, '❌ Opción no válida. Por favor, selecciona una opción del menú (1-6).');
+                }
+                break;
+
+            case 'service_1':
+            case 'service_2':
+            case 'service_3':
+            case 'service_4':
+                const serviceNum = state.stage.split('_')[1];
+                const service = services[serviceNum];
+                if (service.options[messageBody]) {
+                    await transferToAgent(from, customerName);
+                } else {
+                    await client.sendMessage(from, '❌ Opción no válida. Por favor, selecciona una letra válida de las opciones mostradas.');
+                }
+                break;
+
+            case 'combos':
+                if (['1', '2', '3'].includes(messageBody)) {
+                    await transferToAgent(from, customerName);
+                } else {
+                    await client.sendMessage(from, '❌ Opción no válida. Por favor, selecciona un número de combo válido (1-3).');
+                }
+                break;
+
+            default:
                 state.stage = 'menu';
-            } else {
-                await client.sendMessage(from, '❌ Opción no válida. Por favor, selecciona una letra válida de las opciones mostradas.');
-            }
+                await sendMainMenu(from, customerName);
         }
     });
 
@@ -245,7 +298,7 @@ const createWhatsAppClient = () => {
     client.on('disconnected', (reason) => {
         console.log('Cliente WhatsApp desconectado:', reason);
         qr = null;
-        chatStates.clear(); // Limpiar estados al desconectarse
+        chatStates.clear();
         wss.clients.forEach((client) => {
             if (client.readyState === WebSocket.OPEN) {
                 client.send(JSON.stringify({ 
