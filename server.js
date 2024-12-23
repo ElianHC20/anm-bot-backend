@@ -13,6 +13,7 @@ const wss = new WebSocket.Server({ server });
 
 let client = null;
 let qr = null;
+let heartbeatInterval = null; // Nuevo: Intervalo para el heartbeat
 
 // Map para almacenar los estados de los chats
 const chatStates = new Map();
@@ -79,6 +80,41 @@ app.use((req, res, next) => {
     res.header('Access-Control-Allow-Headers', 'Content-Type');
     next();
 });
+
+// Nuevo: Función para mantener la conexión activa
+const startHeartbeat = () => {
+    if (heartbeatInterval) {
+        clearInterval(heartbeatInterval);
+    }
+
+    heartbeatInterval = setInterval(async () => {
+        if (client && client.info) {
+            try {
+                // Envía un ping al servidor de WhatsApp
+                await client.sendPresenceAvailable();
+                console.log('Heartbeat enviado');
+            } catch (error) {
+                console.error('Error en heartbeat:', error);
+                // Si hay un error, intentar reconectar
+                await reconnectClient();
+            }
+        }
+    }, 45000); // Envía un heartbeat cada 45 segundos
+};
+
+// Nuevo: Función para reconectar el cliente
+const reconnectClient = async () => {
+    try {
+        console.log('Intentando reconectar...');
+        if (client) {
+            await client.destroy();
+        }
+        client = createWhatsAppClient();
+        await client.initialize();
+    } catch (error) {
+        console.error('Error al reconectar:', error);
+    }
+};
 
 // Función para limpiar los temporizadores de un chat
 const clearChatTimers = (from) => {
@@ -157,7 +193,6 @@ const transferToAgent = async (from, customerName) => {
             'Escribe "menú" o "menu" en cualquier momento para volver al menú principal.'
         );
 
-        // Configurar temporizadores específicos para el modo asesor
         const agentTimers = {
             warning: setTimeout(async () => {
                 const currentState = chatStates.get(from);
@@ -169,14 +204,14 @@ const transferToAgent = async (from, customerName) => {
                         console.error('Error al enviar advertencia de asesor:', error);
                     }
                 }
-            }, 120000), // 2 minutos para advertencia
+            }, 120000),
 
             reset: setTimeout(async () => {
                 const currentState = chatStates.get(from);
                 if (currentState && currentState.withAgent) {
                     await resetChat(from);
                 }
-            }, 240000) // 4 minutos para reinicio
+            }, 240000)
         };
 
         chatTimers.set(from, agentTimers);
@@ -246,11 +281,9 @@ const createWhatsAppClient = () => {
             const from = msg.from;
             const messageBody = msg.body.toLowerCase();
             
-            // Obtener el nombre del contacto
             const contact = await msg.getContact();
             const customerName = contact.pushname || 'Cliente';
 
-            // Manejar nuevo chat o reinicio - responde a cualquier mensaje
             if (!chatStates.has(from)) {
                 chatStates.set(from, {
                     stage: 'menu',
@@ -264,11 +297,9 @@ const createWhatsAppClient = () => {
 
             const state = chatStates.get(from);
             
-            // Resetear temporizadores
             setInactivityTimers(from);
             state.warningShown = false;
 
-            // Si está con un asesor, solo procesar comando de menú
             if (state.withAgent) {
                 if (isMenuCommand(msg.body)) {
                     state.withAgent = false;
@@ -278,7 +309,6 @@ const createWhatsAppClient = () => {
                 return;
             }
 
-            // Procesar comando de menú
             if (isMenuCommand(msg.body)) {
                 state.stage = 'menu';
                 state.withAgent = false;
@@ -286,7 +316,6 @@ const createWhatsAppClient = () => {
                 return;
             }
 
-            // Manejar estados de la conversación
             switch (state.stage) {
                 case 'menu':
                     await processMenuCommand(from, customerName, messageBody, state);
@@ -336,6 +365,8 @@ const createWhatsAppClient = () => {
     client.on('ready', () => {
         console.log('Cliente WhatsApp listo');
         qr = null;
+        // Nuevo: Iniciar heartbeat cuando el cliente está listo
+        startHeartbeat();
         wss.clients.forEach((client) => {
             if (client.readyState === WebSocket.OPEN) {
                 client.send(JSON.stringify({ type: 'ready' }));
@@ -352,25 +383,42 @@ const createWhatsAppClient = () => {
         });
     });
 
-    client.on('disconnected', (reason) => {
-        console.log('Cliente WhatsApp desconectado:', reason);
-        qr = null;
+    // Continuación del código anterior...
 
-        // Limpiar todos los estados y temporizadores
-        chatStates.forEach((state, from) => {
-            clearChatTimers(from);
-        });
-        chatStates.clear();
-        
-        wss.clients.forEach((client) => {
-            if (client.readyState === WebSocket.OPEN) {
-                client.send(JSON.stringify({ 
-                    type: 'disconnected',
-                    reason: reason 
-                }));
-            }
-        });
+client.on('disconnected', async (reason) => {
+    console.log('Cliente WhatsApp desconectado:', reason);
+    qr = null;
+
+    // Limpiar heartbeat al desconectarse
+    if (heartbeatInterval) {
+        clearInterval(heartbeatInterval);
+        heartbeatInterval = null;
+    }
+
+    // Limpiar todos los estados y temporizadores
+    chatStates.forEach((state, from) => {
+        clearChatTimers(from);
     });
+    chatStates.clear();
+    
+    wss.clients.forEach((client) => {
+        if (client.readyState === WebSocket.OPEN) {
+            client.send(JSON.stringify({ 
+                type: 'disconnected',
+                reason: reason 
+            }));
+        }
+    });
+
+    // Nuevo: Intentar reconectar automáticamente después de una desconexión
+    setTimeout(async () => {
+        try {
+            await reconnectClient();
+        } catch (error) {
+            console.error('Error en la reconexión automática:', error);
+        }
+    }, 5000); // Esperar 5 segundos antes de intentar reconectar
+});
 
     return client;
 };
@@ -385,7 +433,8 @@ app.get('/health', (req, res) => {
         status: 'ok',
         timestamp: new Date().toISOString(),
         clientActive: client !== null,
-        websocketConnections: wss.clients.size
+        websocketConnections: wss.clients.size,
+        heartbeatActive: heartbeatInterval !== null // Nuevo: Estado del heartbeat
     });
 });
 
@@ -416,6 +465,12 @@ wss.on('connection', (ws) => {
 
                 case 'stop':
                     if (client) {
+                        // Limpiar heartbeat
+                        if (heartbeatInterval) {
+                            clearInterval(heartbeatInterval);
+                            heartbeatInterval = null;
+                        }
+                        
                         chatStates.forEach((state, from) => {
                             clearChatTimers(from);
                         });
@@ -429,6 +484,12 @@ wss.on('connection', (ws) => {
 
                 case 'reset':
                     if (client) {
+                        // Limpiar heartbeat
+                        if (heartbeatInterval) {
+                            clearInterval(heartbeatInterval);
+                            heartbeatInterval = null;
+                        }
+                        
                         chatStates.forEach((state, from) => {
                             clearChatTimers(from);
                         });
@@ -446,7 +507,10 @@ wss.on('connection', (ws) => {
 
                 case 'getState':
                     if (client && client.info) {
-                        ws.send(JSON.stringify({ type: 'ready' }));
+                        ws.send(JSON.stringify({ 
+                            type: 'ready',
+                            heartbeatActive: heartbeatInterval !== null // Nuevo: Incluir estado del heartbeat
+                        }));
                     } else if (qr) {
                         ws.send(JSON.stringify({ type: 'qr', code: qr }));
                     }
@@ -468,6 +532,18 @@ wss.on('connection', (ws) => {
     ws.on('error', (error) => {
         console.error('Error en WebSocket:', error);
     });
+});
+
+// Nuevo: Manejar el cierre del proceso para limpiar recursos
+process.on('SIGTERM', async () => {
+    console.log('Recibida señal SIGTERM, cerrando aplicación...');
+    if (heartbeatInterval) {
+        clearInterval(heartbeatInterval);
+    }
+    if (client) {
+        await client.destroy();
+    }
+    process.exit(0);
 });
 
 process.on('uncaughtException', (error) => {
